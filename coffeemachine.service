@@ -1,0 +1,17 @@
+[Unit]
+Description=Run sensorized Senseo coffeemachine to receive commands via MQTT.
+After=network-online.target
+Wants=network-online.target systemd-networkd-wait-online.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/coffee/
+ExecStart=/usr/bin/python3 /home/pi/coffee/coffee.py
+User=pi
+StandardOutput=syslog+console
+StandardError=syslog+console
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

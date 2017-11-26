@@ -4,6 +4,7 @@ import json
 import RPi.GPIO as GPIO
 from threading import Timer
 import paho.mqtt.client as mqtt
+import configparser
 
 MAIN_SWITCH = 21
 SINGLE_COFFEE = 20
@@ -11,35 +12,42 @@ DOUBLE_COFFEE = 16
 LED_INPUT = 26
 
 SWITCH_INTERVAL = 0.5
+BOUNCE_TIME = 200  # ms
 
 # LED periods
 WARMING_UP_PERIOD = 2.0  # in microseconds
 WATER_EMPTY = 0.2  # in microseconds
 
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('coffeemachine')
 
 
 # ToDo:
-# Setup journalctl to see log output
 # Extract config to external file
-# Turn on/off machine via MQTT
 # Documentation...
 
+# noinspection PySimplifyBooleanCheck
 class CoffeeMachine:
     def __init__(self):
+
+        GPIO.cleanup()
+
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(MAIN_SWITCH, GPIO.OUT, initial=GPIO.HIGH)
         GPIO.setup(SINGLE_COFFEE, GPIO.OUT, initial=GPIO.HIGH)
         GPIO.setup(DOUBLE_COFFEE, GPIO.OUT, initial=GPIO.HIGH)
-        GPIO.setup(LED_INPUT, GPIO.IN)
+        GPIO.setup(LED_INPUT, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
         # detect changes in LED
-        GPIO.add_event_detect(LED_INPUT, GPIO.FALLING, callback=self.led_falling, bouncetime=200)
+        GPIO.remove_event_detect(LED_INPUT)
+        GPIO.add_event_detect(LED_INPUT, GPIO.FALLING, callback=self.led_changed, bouncetime=BOUNCE_TIME)
         self.recent_led_change = time.time()
 
         self.warmed_up_timer = None
 
         self.mode = 'single'  # single or double
+
+        logger.info('Initialized coffee machine.')
 
     def toggle_on_off(self):
         logger.info('Toggling on/off')
@@ -59,9 +67,16 @@ class CoffeeMachine:
         time.sleep(SWITCH_INTERVAL)
         GPIO.output(DOUBLE_COFFEE, GPIO.HIGH)
 
-    def led_falling(self, channel):
-        logger.info('LED fell within {} ms'.format(time.time() - self.recent_led_change))
+    def led_changed(self, channel):
+
+        # avoid noise
+        time_diff = time.time() - self.recent_led_change
         self.recent_led_change = time.time()
+        if time_diff < 0.95:
+            return
+
+        led_state = GPIO.input(LED_INPUT)
+        logger.info('LED changed within {} ms (state: {})'.format(time_diff, led_state))
 
         # handle making coffee timer
         if self.warmed_up_timer:
@@ -77,10 +92,12 @@ class CoffeeMachine:
             else:
                 self.toggle_double_coffee()
 
-        self.warmed_up_timer = Timer(WARMING_UP_PERIOD * 1000 / 1000, time_coffee_making, ())
+        self.warmed_up_timer = Timer(WARMING_UP_PERIOD * 2000 / 1000, time_coffee_making, ())
         self.warmed_up_timer.start()
 
-    def make_coffee(self):
+    def make_coffee(self, mode):
+
+        self.mode = mode
 
         logger.info('Starting coffee making coffee with mode {}'.format(self.mode))
 
@@ -95,35 +112,38 @@ class CoffeeMachine:
         logger.info('Scheduled coffee making after heat up phase')
 
 
-coffeemachine = CoffeeMachine()
+if __name__ == '__main__':
+    coffeemachine = CoffeeMachine()
 
 
-def on_message(client, userdata, msg):
-    message = json.loads(msg.payload.decode('utf-8'))
-    mode = message['mode']
+    def on_message(client, userdata, msg):
 
-    logger.info('Received mode {}'.format(mode))
+        if msg.topic == '/coffee/toggle_on_off':
+            logger.info('Received toggle on off command')
+            coffeemachine.toggle_on_off()
+        elif msg.topic == '/coffee/make':
+            message = json.loads(msg.payload.decode('utf-8'))
+            mode = message['mode']
 
-    coffeemachine.mode = mode
-    coffeemachine.make_coffee()
+            logger.info('Received mode {}'.format(mode))
+
+            coffeemachine.make_coffee(mode=mode)
 
 
-def on_connect(client, userdata, flags, rc):
-    logger.info('Connected with result code ' + str(rc))
-    client.subscribe('/coffee/make')
+    def on_connect(client, userdata, flags, rc):
+        # logger.info('Connected with result code ' + str(rc))
+        client.subscribe(topic='/coffee/make')
+        client.subscribe(topic='/coffee/toggle_on_off')
 
 
-def setup_mqtt():
     logger.info('Initializing MQTT client')
+    config = configparser.ConfigParser()
+    config.read('config.ini')
     client = mqtt.Client(client_id='coffeemachine')
-    client.username_pw_set(username='homeassistant', password='*Naboa2015*')
+    client.username_pw_set(username=config['mqtt_username'], password=config['mqtt_password'])
     client.on_message = on_message
     client.on_connect = on_connect
-    client.connect('10.0.0.34', 1883, 60)
+    client.connect(config['mqtt_host'], config['mqtt_port'], keepalive=600)
 
     logger.info('Starting MQTT loop')
     client.loop_forever()
-
-
-if __name__ == '__main__':
-    setup_mqtt()
