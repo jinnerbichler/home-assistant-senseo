@@ -10,5 +10,6 @@ def update():
         put('./requirements.txt', '.')
         put('./config.ini', '.')
 
-    # sudo('systemctl restart coffeemachine.service')
-    # run('journalctl -f -u coffeemachine.service ')
+    # restart service
+    sudo('systemctl restart coffeemachine.service')
+    run('journalctl -f -u coffeemachine.service ')
