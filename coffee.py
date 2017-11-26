@@ -22,10 +22,6 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger('coffeemachine')
 
 
-# ToDo:
-# Extract config to external file
-# Documentation...
-
 # noinspection PySimplifyBooleanCheck
 class CoffeeMachine:
     def __init__(self):
@@ -131,7 +127,6 @@ if __name__ == '__main__':
 
 
     def on_connect(client, userdata, flags, rc):
-        # logger.info('Connected with result code ' + str(rc))
         client.subscribe(topic='/coffee/make')
         client.subscribe(topic='/coffee/toggle_on_off')
 
@@ -139,11 +134,12 @@ if __name__ == '__main__':
     logger.info('Initializing MQTT client')
     config = configparser.ConfigParser()
     config.read('config.ini')
+    mqtt_config = config['MQTT']
     client = mqtt.Client(client_id='coffeemachine')
-    client.username_pw_set(username=config['mqtt_username'], password=config['mqtt_password'])
+    client.username_pw_set(username=mqtt_config['username'], password=mqtt_config['password'])
     client.on_message = on_message
     client.on_connect = on_connect
-    client.connect(config['mqtt_host'], config['mqtt_port'], keepalive=600)
+    client.connect(mqtt_config['host'], int(mqtt_config['port']), keepalive=600)
 
     logger.info('Starting MQTT loop')
     client.loop_forever()
